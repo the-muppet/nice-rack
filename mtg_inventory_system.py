@@ -223,6 +223,16 @@ def insert_card(session, tcg_id, card_name, set_name, quantity):
     session.add_all([new_row, new_section, new_sleeve, new_card])
     session.flush()
 
+def upload_from_csv(filename, session):
+    with open(filename, 'r') as csvfile:
+        card_reader = csv.DictReader(csvfile)
+        for row in card_reader:
+            tcg_id = int(row['TCGplayer Id'])
+            card_name = row['Product Name']
+            set_name = row['Set Name']
+            quantity = int(row['Add to Quantity'])
+            print(f"Inserting {card_name} from {set_name} with TCG ID {tcg_id} and quantity {quantity}")
+            insert_card(session, tcg_id, card_name, set_name, quantity)
 
 def query_inventory(session, tcg_id):
     return session.query(Section).filter(
