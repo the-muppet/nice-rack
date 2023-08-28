@@ -150,13 +150,6 @@ def calculate_box_location(total_boxes):
     return rack_number, shelf_number, column_number, box_number
 
 
-def add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity):
-    new_card = Card(tcg_id=tcg_id, sleeve=sleeve.id, card_name=card_name, set_name=set_name, quantity=quantity)
-    sleeve.current_quantity += quantity
-    sleeve.card_count += 1
-    return new_card
-
-
 def find_or_create_storage(session, parent, child_class, attr):
     """Finds available storage or creates new one if necessary."""
     available_storage = [item for item in getattr(parent, attr) if len(item.cards) < item.max_cards]
@@ -171,6 +164,19 @@ def find_or_create_storage(session, parent, child_class, attr):
         session.flush()
         return new_storage
     return None
+
+
+def prepare_card(tcg_id, card_name, set_name, quantity, sleeve_id=None):
+    new_card = Card(tcg_id=tcg_id, card_name=card_name, set_name=set_name, quantity=quantity, sleeve_id=sleeve_id)
+    return new_card
+
+
+def add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity):
+    new_card = prepare_card(tcg_id, card_name, set_name, quantity, sleeve.id)
+    sleeve.current_quantity += quantity
+    sleeve.card_count += 1
+    session.add(new_card)
+    session.flush()
 
 
 def insert_card(session, tcg_id, card_name, set_name, quantity):
@@ -218,8 +224,7 @@ def insert_card(session, tcg_id, card_name, set_name, quantity):
     new_row = Row(box_id=new_box.id)
     new_section = Section(row_id=new_row.id)
     new_sleeve = Sleeve(section_id=new_section.id)
-    new_card = Card(tcg_id=tcg_id, card_name=card_name, set_name=set_name, quantity=quantity, sleeve_id=new_sleeve.id)
-
+    new_card = prepare_card(tcg_id, card_name, set_name, quantity, new_sleeve.id)
     session.add_all([new_row, new_section, new_sleeve, new_card])
     session.flush()
 
@@ -238,3 +243,8 @@ def query_inventory_by_set(session, partial_set):
     return session.query(Section).filter(
         Section.sleeves.any(Sleeve.cards.any(Card.name.ilike(f"%{partial_set}%")))
     ).all()
+
+
+if __name__ == "__main__":
+    Base.metadata.create_all(engine)
+    session = Session()
