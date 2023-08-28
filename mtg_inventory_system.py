@@ -148,18 +148,30 @@ def calculate_box_location(total_boxes):
 
 def find_or_create_storage(session, parent, child_class, attr):
     """Finds available storage or creates new one if necessary."""
-    available_storage = [item for item in getattr(parent, attr) if len(item.cards) < item.max_cards]
+    available_storage = None
+
+    if child_class.__name__ == 'Card':
+        available_storage = [item for item in getattr(parent, attr) if item.can_add_card(1)]
+    elif child_class.__name__ == 'Sleeve':
+        available_storage = [item for item in getattr(parent, attr) if item.sleeve_count < item.max_sleeves]
+    elif child_class.__name__ == 'Section':
+        available_storage = [item for item in getattr(parent, attr) if item.section_count < item.max_sections]
+    elif child_class.__name__ == 'Row':
+        available_storage = [item for item in getattr(parent, attr) if item.row_count < item.max_rows]
     
     if available_storage:
         return available_storage[0]
-
+    
+    # If available storage not found, create new storage
     if len(getattr(parent, attr)) < getattr(parent, f"max_{attr}"):
         new_storage = child_class()
         session.add(new_storage)
-        getattr(parent, attr).append(new_storage)
+        getattr(parent, f"add_{child_class.__name__.lower()}")(new_storage)
         session.flush()
         return new_storage
+
     return None
+
 
 
 def prepare_card(tcg_id, card_name, set_name, quantity, sleeve_id=None):
