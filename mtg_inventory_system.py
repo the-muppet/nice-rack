@@ -1,10 +1,9 @@
-import os
 import csv
 import logging
 from termcolor import colored
 from sqlalchemy import (
     Column, ForeignKey, Integer, 
-    String, text, create_engine)
+    String, create_engine)
 from sqlalchemy.orm import (
     declarative_base, joinedload, 
     relationship, sessionmaker)
@@ -52,6 +51,7 @@ class Card(Base):
     
     sleeve = relationship("Sleeve", back_populates="cards")
 
+
 class Sleeve(Base):
     """
     Second extrapolation layer
@@ -78,7 +78,8 @@ class Sleeve(Base):
             self.cards.append(card)
             self.card_count += 1
             return True
-        return False   
+        return False
+    
 
 class Section(Base):
     """
@@ -103,6 +104,7 @@ class Section(Base):
             return True
         return False
 
+
 class Row(Base):
     """
     Fourth layer of system
@@ -126,6 +128,7 @@ class Row(Base):
             return True
         return False
 
+
 class Box(Base):
     """
     Top layer of inventory management system
@@ -147,7 +150,8 @@ class Box(Base):
             self.rows.append(row)
             self.row_count += 1
             return True
-        return False  
+        return False
+    
 
 def calculate_box_location(total_boxes):
     boxes_per_column = 3
@@ -162,6 +166,7 @@ def calculate_box_location(total_boxes):
     box_number = ((total_boxes % boxes_per_rack) % boxes_per_shelf) % boxes_per_column + 1
 
     return rack_number, shelf_number, column_number, box_number
+
 
 def find_or_create_storage(session, parent, child_class, attr):
     """Finds available storage or creates new storage if necessary."""
@@ -186,13 +191,15 @@ def find_or_create_storage(session, parent, child_class, attr):
         getattr(parent, f"add_{child_class.__name__.lower()}")(new_storage)
         session.flush()
         return new_storage
-    
-    session.commit()
+
     return None
+
+
 
 def prepare_card(tcg_id, card_name, set_name, quantity, sleeve_id=None):
     new_card = Card(tcg_id=tcg_id, card_name=card_name, set_name=set_name, quantity=quantity, sleeve_id=sleeve_id)
     return new_card
+
 
 def add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity):
     new_card = prepare_card(tcg_id, card_name, set_name, quantity, sleeve.id)
@@ -200,6 +207,7 @@ def add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity):
     sleeve.card_count += 1
     session.add(new_card)
     session.flush()
+
 
 def insert_card(session, tcg_id, card_name, set_name, quantity):
     logger.debug("Attempting to insert card.")
@@ -264,7 +272,6 @@ def insert_card(session, tcg_id, card_name, set_name, quantity):
     new_card = prepare_card(tcg_id, card_name, set_name, quantity, new_sleeve.id)
     session.add_all([new_row, new_section, new_sleeve, new_card])
     session.flush()
-    session.commit()
 
 def upload_from_csv(filename, session):
     with open(filename, 'r') as csvfile:
@@ -278,54 +285,12 @@ def upload_from_csv(filename, session):
 
                 print(f"TCG ID: {tcg_id}, Name: {card_name}, Set: {set_name}, Quantity: {quantity} added to database")
                 insert_card(session, tcg_id, card_name, set_name, quantity)
-                session.commit()
             except ValueError:
                 logger.warning(f"Invalid TCGplayer Id: {row['TCGplayer Id']}. Skipping row.")
                 continue
 
-def match_order_from_csv(filename, session):
-    to_remove_list = []
-    output = []
-
-    with open(filename, 'r') as csvfile:
-        card_reader = csv.DictReader(csvfile)
-        for row in card_reader:
-            try:
-                tcg_id = int(row['TCGplayer Id'])
-                quantity = int(row['Quantity'])
-                
-                locations, cards_to_remove = find_card_location(session, tcg_id, quantity)
-                if locations:
-                    to_remove_list.extend(cards_to_remove)
-                    output.append({"TCGplayer Id": tcg_id, "Quantity": quantity, "Locations": locations})
-
-            except ValueError:
-                print(f"Skipping row with invalid TCGplayer Id: {row['TCGplayer Id']}")
-                continue 
-    remove_cards(session, to_remove_list)
-
-    if output:
-        keys = output[0].keys()
-        filename, file_extension = os.path.splitext(filename)
-        location_filename = f"{filename}-locations{file_extension}"
-        log_filename = f"{filename}-log.txt"
-        
-        with open(location_filename, 'w') as output_file:
-            dict_writer = csv.DictWriter(output_file, fieldnames=keys)
-            dict_writer.writeheader()
-            dict_writer.writerows(output)
-
-        with open(log_filename, 'a') as log_file:
-            for item in output:
-                log_file.write(f"Removed card with TCG Id: {item['TCGplayer Id']}, Location: {item['Locations']}\n")
-    else:
-        print("No valid output to save.")
-
-def find_card_location(session, tcg_id, needed_quantity):
-    locations_with_counts = []
-    cards_to_remove = []
-
-    # Query to find cards
+def find_card_location(session, tcg_id):
+    locations = []
     query_result = session.query(Box, Row, Section, Sleeve, Card).filter(
         Box.id == Row.box_id,
         Row.id == Section.row_id,
@@ -333,39 +298,18 @@ def find_card_location(session, tcg_id, needed_quantity):
         Sleeve.id == Card.sleeve_id,
         Card.tcg_id == tcg_id
     ).all()
-
-    # Initialize a counter to keep track of the total cards pulled
-    total_cards_collected = 0
-
+    
     for box, row, section, sleeve, card in query_result:
-        if total_cards_collected >= needed_quantity:
-            break  # We've found enough copies, exit loop
-
-        location_str = f"{box.id}.{row.id}.{section.id}.{sleeve.id}"
-        
-        # Find an existing location in locations_with_counts
-        location_dict = next((loc for loc in locations_with_counts if loc['Location'] == location_str), None)
-
-        if location_dict is None:
-            location_dict = {'Location': location_str, 'Card Count': 0}
-            locations_with_counts.append(location_dict)
-
-        # Calculate how many copies we can pull from this specific location
-        cards_to_collect_here = min(card.quantity, needed_quantity - total_cards_collected)
-        
-        # Increment counts
-        location_dict['Card Count'] += cards_to_collect_here
-        total_cards_collected += cards_to_collect_here
-
-        # Append to the cards_to_remove list with details on how many to remove
-        cards_to_remove.append({'card': card, 'quantity_to_remove': cards_to_collect_here})
-
-    return locations_with_counts, cards_to_remove
-
-def remove_cards(session, cards_to_remove):
-    for card in cards_to_remove:
-        session.delete(card)
-    session.commit()
+        locations.append(f"""
+            Box: {box.id}, 
+            Row: {row.id}, 
+            Section: {section.id}, 
+            Sleeve: {sleeve.id}, 
+            Card: {card.id}, 
+            Quantity: {card.quantity}
+    """)
+    
+    return locations
 
 def query_inventory(session, tcg_id):
     return session.query(Section).filter(
@@ -382,22 +326,11 @@ def query_inventory_by_set(session, partial_set):
         Section.sleeves.any(Sleeve.cards.any(Card.name.ilike(f"%{partial_set}%")))
     ).all()
 
-
 if __name__ == "__main__":
     engine = create_engine('sqlite:///mtg_inventory.db')
     Session = sessionmaker(bind=engine)
     Base.metadata.create_all(engine)
     session = Session()
 
-    with engine.connect() as connection:
-        result = connection.execute(text("SELECT * FROM cards"))
-        for row in result:
-            print(row)
-
-    # upload batch to database
-    filepath = r'/home/elmo/mtg-inv-sys/roca-test-3.csv'
+    filepath = r'/home/elmo/mtg-inv-sys/roca-test-1.csv'
     upload_from_csv(filepath, session)
-
-    # pull order/RI from database
-    #filepath = r'/home/elmo/mtg-inv-sys/roca-test-2.csv'
-    #match_order_from_csv(filepath, session)
