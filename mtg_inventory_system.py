@@ -1,10 +1,11 @@
 import csv
 import logging
-
-from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import (declarative_base, joinedload, relationship,
-                            sessionmaker)
+from sqlalchemy import (
+    Column, ForeignKey, Integer, 
+    String, create_engine)
+from sqlalchemy.orm import (
+    declarative_base, joinedload, 
+    relationship, sessionmaker)
 
 logging.basicConfig(level=logging.INFO)
 Base = declarative_base()
@@ -183,7 +184,11 @@ def insert_card(session, tcg_id, card_name, set_name, quantity):
         add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity)
         return
     
-    for box in session.query(Box).options(joinedload('rows.sections.sleeves')).all():
+    for box in session.query(Box).options(
+        joinedload(Box.rows).
+        joinedload(Row.sections).
+        joinedload(Section.sleeves)
+        ).all():
         for row in box.rows:
             for section in row.sections:
                 sleeve = find_or_create_storage(session, section, Sleeve, 'sleeves')
@@ -231,7 +236,7 @@ def upload_from_csv(filename, session):
             card_name = row['Product Name']
             set_name = row['Set Name']
             quantity = int(row['Add to Quantity'])
-            print(f"Inserting {card_name} from {set_name} with TCG ID {tcg_id} and quantity {quantity}")
+            print(f"TCG ID: {tcg_id}, Name: {card_name}, Set: {set_name}, Quantity: {quantity} added to database")
             insert_card(session, tcg_id, card_name, set_name, quantity)
 
 def query_inventory(session, tcg_id):
@@ -249,9 +254,11 @@ def query_inventory_by_set(session, partial_set):
         Section.sleeves.any(Sleeve.cards.any(Card.name.ilike(f"%{partial_set}%")))
     ).all()
 
-
 if __name__ == "__main__":
     engine = create_engine('sqlite:///mtg_inventory.db')
     Session = sessionmaker(bind=engine)
     Base.metadata.create_all(engine)
     session = Session()
+
+    filepath = r'/home/elmo/mtg-inv-sys/roca-test-1.csv'
+    upload_from_csv(filepath, session)
