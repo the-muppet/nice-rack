@@ -128,11 +128,6 @@ class Box(Base):
             self.row_count += 1
             return True
         return False
-
-
-engine = create_engine('sqlite:///mtg_inventory.db')
-Session = sessionmaker(bind=engine)
-session = Session()
     
 
 def calculate_box_location(total_boxes):
@@ -246,5 +241,7 @@ def query_inventory_by_set(session, partial_set):
 
 
 if __name__ == "__main__":
+    engine = create_engine('sqlite:///mtg_inventory.db')
+    Session = sessionmaker(bind=engine)
     Base.metadata.create_all(engine)
     session = Session()
