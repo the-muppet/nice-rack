@@ -7,7 +7,7 @@ from sqlalchemy.orm import (
     declarative_base, joinedload, 
     relationship, sessionmaker)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 Base = declarative_base()
 
 
@@ -147,17 +147,17 @@ def calculate_box_location(total_boxes):
 
 
 def find_or_create_storage(session, parent, child_class, attr):
-    """Finds available storage or creates new one if necessary."""
+    """Finds available storage or creates new storage if necessary."""
     available_storage = None
 
     if child_class.__name__ == 'Card':
         available_storage = [item for item in getattr(parent, attr) if item.can_add_card(1)]
     elif child_class.__name__ == 'Sleeve':
-        available_storage = [item for item in getattr(parent, attr) if item.sleeve_count < item.max_sleeves]
+        available_storage = [item for item in getattr(parent, attr) if item.card_count < item.max_cards]
     elif child_class.__name__ == 'Section':
-        available_storage = [item for item in getattr(parent, attr) if item.section_count < item.max_sections]
+        available_storage = [item for item in getattr(parent, attr) if item.sleeve_count < item.max_sleeves]
     elif child_class.__name__ == 'Row':
-        available_storage = [item for item in getattr(parent, attr) if item.row_count < item.max_rows]
+        available_storage = [item for item in getattr(parent, attr) if item.section_count < item.max_sections]
     
     if available_storage:
         return available_storage[0]
@@ -188,41 +188,52 @@ def add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity):
 
 
 def insert_card(session, tcg_id, card_name, set_name, quantity):
-    logging.info(f"Inserting TCG ID: {tcg_id}, Quantity: {quantity}")
-    
-    sleeve = session.query(Sleeve).filter(Sleeve.current_quantity + quantity <= Sleeve.max_cards).first()
-    
+    logging.debug("Attempting to insert card.")
+
+    sleeve = session.query(Sleeve).filter(
+        Sleeve.current_quantity + quantity <= Sleeve.max_cards).first()
+
     if sleeve:
+        logging.debug("Found an existing sleeve to insert card.")
         add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity)
         return
-    
+
     for box in session.query(Box).options(
         joinedload(Box.rows).
         joinedload(Row.sections).
         joinedload(Section.sleeves)
         ).all():
+        
         for row in box.rows:
             for section in row.sections:
                 sleeve = find_or_create_storage(session, section, Sleeve, 'sleeves')
                 if sleeve:
+                    logging.debug("Created a new sleeve inside an existing section.")
                     add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity)
                     return
                 
                 new_section = find_or_create_storage(session, row, Section, 'sections')
                 if new_section:
+                    logging.debug("Created a new section inside an existing row.")
                     sleeve = find_or_create_storage(session, new_section, Sleeve, 'sleeves')
                     if sleeve:
+                        logging.debug("Created a new sleeve inside the new section.")
                         add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity)
                         return
                     
             new_row = find_or_create_storage(session, box, Row, 'rows')
             if new_row:
+                logging.debug("Created a new row inside an existing box.")
                 section = find_or_create_storage(session, new_row, Section, 'sections')
                 if section:
+                    logging.debug("Created a new section inside the new row.")
                     sleeve = find_or_create_storage(session, section, Sleeve, 'sleeves')
                     if sleeve:
+                        logging.debug("Created a new sleeve inside the new section.")
                         add_card_to_sleeve(session, sleeve, tcg_id, card_name, set_name, quantity)
                         return
+    
+    logging.debug("Creating a new Box, Row, Section, and Sleeve as no existing storage available.")
     
     # If code reaches here, create new Box, Row, Section, Sleeve, and add Card
     total_boxes = session.query(Box).count()
@@ -244,12 +255,17 @@ def upload_from_csv(filename, session):
     with open(filename, 'r') as csvfile:
         card_reader = csv.DictReader(csvfile)
         for row in card_reader:
-            tcg_id = int(row['TCGplayer Id'])
-            card_name = row['Product Name']
-            set_name = row['Set Name']
-            quantity = int(row['Add to Quantity'])
-            print(f"TCG ID: {tcg_id}, Name: {card_name}, Set: {set_name}, Quantity: {quantity} added to database")
-            insert_card(session, tcg_id, card_name, set_name, quantity)
+            try:
+                tcg_id = int(row['TCGplayer Id'])
+                card_name = row['Product Name']
+                set_name = row['Set Name']
+                quantity = int(row['Add to Quantity'])
+
+                print(f"TCG ID: {tcg_id}, Name: {card_name}, Set: {set_name}, Quantity: {quantity} added to database")
+                insert_card(session, tcg_id, card_name, set_name, quantity)
+            except ValueError:
+                logging.warning(f"Invalid TCGplayer Id: {row['TCGplayer Id']}. Skipping row.")
+                continue
 
 def query_inventory(session, tcg_id):
     return session.query(Section).filter(
