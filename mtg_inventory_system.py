@@ -1,5 +1,5 @@
 import csv
-import logger
+import logging
 from termcolor import colored
 from sqlalchemy import (
     Column, ForeignKey, Integer, 
@@ -8,7 +8,7 @@ from sqlalchemy.orm import (
     declarative_base, joinedload, 
     relationship, sessionmaker)
 
-class ColoredFormatter(logger.Formatter):
+class ColoredFormatter(logging.Formatter):
     COLORS = {
         'WARNING': 'yellow',
         'INFO': 'green',
@@ -20,15 +20,16 @@ class ColoredFormatter(logger.Formatter):
     def format(self, record):
         log_message = super(ColoredFormatter, self).format(record)
         return colored(log_message, self.COLORS.get(record.levelname))
-    
-logger.basicConfig(level=logger.DEBUG)
-logger = logger.getLogger(__name__)
-handler = logger.StreamHandler()
 
+logger = logging.getLogger(__name__)
+logger.propagate = False
+
+handler = logging.StreamHandler()
 formatter = ColoredFormatter("[%(levelname)s] - %(message)s")
 handler.setFormatter(formatter)
 
 logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 Base = declarative_base()
 
@@ -287,6 +288,28 @@ def upload_from_csv(filename, session):
             except ValueError:
                 logger.warning(f"Invalid TCGplayer Id: {row['TCGplayer Id']}. Skipping row.")
                 continue
+
+def find_card_location(session, tcg_id):
+    locations = []
+    query_result = session.query(Box, Row, Section, Sleeve, Card).filter(
+        Box.id == Row.box_id,
+        Row.id == Section.row_id,
+        Section.id == Sleeve.section_id,
+        Sleeve.id == Card.sleeve_id,
+        Card.tcg_id == tcg_id
+    ).all()
+    
+    for box, row, section, sleeve, card in query_result:
+        locations.append(f"""
+            Box: {box.id}, 
+            Row: {row.id}, 
+            Section: {section.id}, 
+            Sleeve: {sleeve.id}, 
+            Card: {card.id}, 
+            Quantity: {card.quantity}
+    """)
+    
+    return locations
 
 def query_inventory(session, tcg_id):
     return session.query(Section).filter(
